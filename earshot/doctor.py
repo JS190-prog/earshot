@@ -6,7 +6,7 @@ Without --load it imports nothing heavy (a few seconds). It reports, per model, 
 holds (cached / legacy / incomplete / missing) and the folder that loads, whether an offline flag is set, and the
 sound bank (earshot sfx / kit: its version, the files it loads and how many sounds of each type). --load
 also loads both models, times one embedding (first load can take ~20-40 s) and reports the revision, weights file and
-precision in use (bf16 only on CPUs with native bf16, else fp32). --fetch downloads the pinned files that are not in
+precision in use (bf16 only on CPUs with native bf16, else fp32) and the device the models run on (EARSHOT_DEVICE). --fetch downloads the pinned files that are not in
 the cache yet (~1.1 GB the first time; refused while an offline flag is set).
 """
 import importlib
@@ -93,6 +93,8 @@ def _load(r):
     c.embed_audio([np.zeros(48000, np.float32)])
     r['clap_one_window_s'] = round(time.time() - t, 2)
     r['clap_precision'] = c.precision
+    r['device_used'] = str(c.device)
+    r['torch_cuda_used'] = c.device.type == 'cuda'
     r['clap_revision'], r['clap_weights'] = c.revision, c.weights
     t = time.time()
     a = ast.get()
@@ -122,7 +124,7 @@ def check(load=False, fetch_missing=False):
     r['packages'] = pk
     r['ffmpeg'] = shutil.which('ffmpeg') or 'MISSING (install ffmpeg and put it on PATH)'
     r['ffprobe'] = shutil.which('ffprobe') or 'MISSING'
-    r['torch_cuda_used'] = False
+    r['device'] = config.DEVICE   # requested (EARSHOT_DEVICE); --load reports device_used / torch_cuda_used
     r['offline'] = config.offline()   # the flag that keeps earshot off the network, or None
     if fetch_missing:
         r['fetched'] = fetch()

@@ -4,7 +4,8 @@ earshot gives coding agents "ears": an agent cannot hear, so earshot turns sound
 about: calibrated text-audio match scores, the best moment inside a long recording, similarity to real reference
 recordings, real-vs-synthesized judgement, a second-by-second listening transcript of a soundtrack, an annotated
 picture of it (agents can look at images), a launch-video scorecard against professional references, and (only with
-the user's own key) an audio-LLM critique. Everything runs on CPU; no GPU is ever used.
+the user's own key) an audio-LLM critique. Everything runs on CPU; with a CUDA torch build the two models run on an NVIDIA GPU (`EARSHOT_DEVICE`,
+fp32, same results as CPU fp32).
 
 The repo also ships `skills/real-sound/`: the agent skill for building premium soundtracks for code-made films from
 real licensed recordings (sourcing + licence audit + design JSON + mixer + mastering + credits), which uses earshot to
@@ -16,7 +17,7 @@ pick and verify sounds.
 2. **Agent-readable first.** Every command prints a short plain-language `summary` first, then details; `--json` for
    the full dict. Timestamps as seconds (3 decimals) and m:ss.ss in text. Levels in dBFS / LUFS / dBTP.
 3. **Deterministic and cached.** No random crops; fixed windows; embeddings cached on disk (EARSHOT_HOME/emb).
-4. **Gentle on the machine.** CPU only, bf16 by default, `EARSHOT_THREADS` (default min(4, cores/2)). Batch work.
+4. **Gentle on the machine.** CPU by default (a GPU only with a CUDA torch build), bf16 on CPUs with native bf16, `EARSHOT_THREADS` (default min(4, cores/2)). Batch work.
    This laptop (Ryzen 7 260, 8 cores / 16 threads) is shared with other jobs: when developing set `EARSHOT_THREADS=3`,
    keep any single job under ~10 minutes, run jobs in the foreground, one heavy job at a time per agent.
 5. **No media in git.** Never commit audio/video (reference films, downloaded recordings, renders). Derived numbers

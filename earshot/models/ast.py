@@ -1,4 +1,5 @@
-"""AudioSet tagger (Audio Spectrogram Transformer) on CPU: 527 sound classes with independent probabilities.
+"""AudioSet tagger (Audio Spectrogram Transformer) on CPU or a CUDA GPU (EARSHOT_DEVICE): 527 sound classes with
+independent probabilities.
 
     from earshot.models import ast
     t = ast.get()
@@ -19,7 +20,7 @@ import numpy as np
 
 from .. import audio, config
 from . import hub
-from .clap import _load_hf, _set_precision
+from .clap import _load_hf, _set_precision, pick_device
 
 SR_AST = 16000
 WIN_S = 10.24
@@ -39,7 +40,8 @@ class AST:
         self.torch = torch
         self.model = _load_hf(ASTForAudioClassification, self.spec, weights=True).eval()
         self.fe = _load_hf(ASTFeatureExtractor, self.spec)
-        self.dtype = _set_precision(self.model, torch)
+        self.device = pick_device(torch)
+        self.dtype = _set_precision(self.model, torch, self.device)
         self.precision = 'bf16' if self.dtype == torch.bfloat16 else 'fp32'
         self.labels = [self.model.config.id2label[i] for i in range(len(self.model.config.id2label))]
         self.index = {l: i for i, l in enumerate(self.labels)}
@@ -54,10 +56,11 @@ class AST:
             with warnings.catch_warnings():
                 warnings.filterwarnings('ignore', message='.*mel filter.*')
                 inp = self.fe(chunk, sampling_rate=SR_AST, return_tensors='pt')
-            inp = {k: (v.to(self.dtype) if v.is_floating_point() else v) for k, v in inp.items()}
+            inp = {k: v.to(self.device, self.dtype) if v.is_floating_point() else v.to(self.device)
+                   for k, v in inp.items()}
             with torch.inference_mode():
                 logits = self.model(**inp).logits
-            out.append(torch.sigmoid(logits.float()).numpy().astype(np.float32))
+            out.append(torch.sigmoid(logits.float()).cpu().numpy().astype(np.float32))
         return np.concatenate(out) if out else np.zeros((0, len(self.labels)), np.float32)
 
     def probs(self, arrays, reduce='max', batch=8):

@@ -1,4 +1,5 @@
-"""CLAP (contrastive language-audio pretraining) on CPU: one embedding space for sounds and text.
+"""CLAP (contrastive language-audio pretraining) on CPU or a CUDA GPU (EARSHOT_DEVICE): one embedding space for
+sounds and text.
 
     from earshot.models import clap
     c = clap.get()
@@ -99,10 +100,43 @@ def native_bf16(torch):
     return False
 
 
-def _set_precision(model, torch):
+def _cuda_runs(torch):
+    """(True, '') when a CUDA GPU takes a tensor op, else (False, why). A torch build without kernels for the GPU's
+    architecture reports is_available() and fails only on the first op, so this runs one"""
+    try:
+        if not torch.cuda.is_available():
+            return False, f'torch {torch.__version__} sees no usable CUDA GPU (a CPU-only torch build?)'
+        (torch.ones(2, device='cuda') * 2).sum().item()
+        return True, ''
+    except Exception as e:  # noqa: BLE001
+        return False, f'CUDA does not run with torch {torch.__version__}: {type(e).__name__}: {e}'
+
+
+def pick_device(torch, want=None):
+    """the torch device for the models from EARSHOT_DEVICE (config.DEVICE): auto -> cuda when it runs, else cpu"""
+    want = (want or config.DEVICE).strip().lower()
+    if want == 'cpu':
+        return torch.device('cpu')
+    if want != 'auto' and want != 'cuda' and not (want.startswith('cuda:') and want[5:].isdigit()):
+        raise ValueError(f'EARSHOT_DEVICE={want!r}: use auto, cpu, cuda or cuda:N')
+    ok, why = _cuda_runs(torch)
+    if want == 'auto':
+        return torch.device('cuda' if ok else 'cpu')
+    if not ok:
+        raise RuntimeError(f'EARSHOT_DEVICE={want} but {why}. Install a CUDA torch build (README: GPU) or set '
+                           'EARSHOT_DEVICE=cpu')
+    return torch.device(want)
+
+
+def _set_precision(model, torch, device=None):
     """bf16 weights when the CPU has native bf16 (AVX512-BF16 / AMX; on the Zen 4 dev laptop 1.4x faster than fp32,
     embeddings within cosine 0.9993 of it: eval/semantics/precision.json); fp32 otherwise, and always with
-    EARSHOT_PRECISION=fp32"""
+    EARSHOT_PRECISION=fp32. On a GPU: fp32 with TF32 off, so embeddings match the CPU fp32 cache and calibration"""
+    if device is not None and device.type != 'cpu':
+        torch.backends.cuda.matmul.allow_tf32 = False
+        torch.backends.cudnn.allow_tf32 = False
+        model.to(device=device, dtype=torch.float32)
+        return torch.float32
     if config.PRECISION != 'bf16' or not native_bf16(torch):
         return torch.float32
     try:
@@ -127,7 +161,8 @@ class Clap:
         self.torch = torch
         self.model = _load_hf(ClapModel, self.spec, weights=True).eval()
         self.proc = _load_hf(ClapProcessor, self.spec)
-        self.dtype = _set_precision(self.model, torch)
+        self.device = pick_device(torch)
+        self.dtype = _set_precision(self.model, torch, self.device)
         self.precision = 'bf16' if self.dtype == torch.bfloat16 else 'fp32'
         self.dir = os.path.join(config.EMB_CACHE, 'clap', self.spec.cache_name + '--' + self.precision)
         os.makedirs(self.dir, exist_ok=True)
@@ -155,10 +190,11 @@ class Clap:
         for i in range(0, len(todo), batch):
             chunk = todo[i:i + batch]
             inp = self.proc(text=[t for _, t in chunk], return_tensors='pt', padding=True)
+            inp = {k: v.to(self.device) for k, v in inp.items()}
             with torch.inference_mode():
                 e = self.model.get_text_features(**inp)
                 e = getattr(e, 'pooler_output', e)
-            e = e.float().numpy().astype(np.float32)
+            e = e.float().cpu().numpy().astype(np.float32)
             e /= np.linalg.norm(e, axis=1, keepdims=True) + 1e-12
             for (k, _), v in zip(chunk, e):
                 self._text[k] = v
@@ -207,11 +243,12 @@ class Clap:
         for i in range(0, len(segs), batch):
             chunk = [self._prep(s, pad) for s in segs[i:i + batch]]
             inp = self.proc(audio=chunk, sampling_rate=audio.SR, return_tensors='pt')
-            inp = {k: (v.to(self.dtype) if v.is_floating_point() else v) for k, v in inp.items()}
+            inp = {k: v.to(self.device, self.dtype) if v.is_floating_point() else v.to(self.device)
+                   for k, v in inp.items()}
             with torch.inference_mode():
                 e = self.model.get_audio_features(**inp)
                 e = getattr(e, 'pooler_output', e)
-            e = e.float().numpy().astype(np.float32)
+            e = e.float().cpu().numpy().astype(np.float32)
             out.append(e / (np.linalg.norm(e, axis=1, keepdims=True) + 1e-12))
         return np.concatenate(out) if out else np.zeros((0, 512), np.float32)
 
