@@ -2,8 +2,11 @@
 
 EARSHOT_HOME     cache root (models, embeddings, decoded audio). Default: <repo>/.cache in a source checkout,
                  else ~/.cache/earshot.
-EARSHOT_THREADS  torch CPU threads per process (default: min(4, cores // 2)); earshot never uses a GPU. The CLI and
-                 the MCP server also give numpy / scipy's OpenBLAS this limit, unless OPENBLAS_NUM_THREADS is set.
+EARSHOT_THREADS  torch CPU threads per process (default: min(4, cores // 2)). The CLI and the MCP server also give
+                 numpy / scipy's OpenBLAS this limit, unless OPENBLAS_NUM_THREADS is set.
+EARSHOT_DEVICE   where CLAP and AST run: auto (default: a CUDA GPU when the installed torch can run on it, else CPU) |
+                 cpu | cuda | cuda:N (an explicit cuda that cannot run is an error, never a silent CPU fallback). On a
+                 GPU the models run fp32 with TF32 off, so embeddings match the CPU fp32 cache and the calibration.
 EARSHOT_CLAP     CLAP model: a Hub id (default laion/larger_clap_general) or a local model folder (config.json plus
                  model.safetensors), loaded from disk as it is, never downloaded into
 EARSHOT_AST      AudioSet tagger: a Hub id (default MIT/ast-finetuned-audioset-10-10-0.4593) or a local model folder
@@ -40,6 +43,7 @@ AST_MODEL = os.environ.get('EARSHOT_AST', 'MIT/ast-finetuned-audioset-10-10-0.45
 CLAP_REVISION = os.environ.get('EARSHOT_CLAP_REVISION') or None
 AST_REVISION = os.environ.get('EARSHOT_AST_REVISION') or None
 PRECISION = os.environ.get('EARSHOT_PRECISION', 'bf16').lower()
+DEVICE = (os.environ.get('EARSHOT_DEVICE') or 'auto').strip().lower()
 
 # Pinned model files (earshot.models.hub downloads exactly these, at exactly this commit, weights as safetensors).
 # - laion/larger_clap_general @ 16c8cc3: the Hub's refs/pr/2, the safetensors conversion bot's commit (2024-05-06) on

@@ -17,7 +17,7 @@ hear that the music swells in the wrong place.
 earshot turns sound into evidence an agent can reason about: what a file sounds like in words, how well it fits a
 description, the best moment inside a long recording, whether it is a real recording or code-synthesized, a
 second-by-second listening transcript of a whole film, an annotated picture of it, and a scorecard against
-professional launch films. It runs locally on CPU, as a CLI, a Python API and an MCP server.
+professional launch films. It runs locally on CPU (or an NVIDIA GPU), as a CLI, a Python API and an MCP server.
 
 With ears, an agent can also **make its own sounds in code** and improve them by listening (`earshot forge`), and
 **translate a recording into code** it can vary (`earshot fit`). Both below.
@@ -298,13 +298,28 @@ page that plays them private. In Python: `from earshot.gallery import gallery`.
 
 ## Install
 
-Needs [uv](https://docs.astral.sh/uv/getting-started/installation/) and ffmpeg / ffprobe on PATH. CPU only; no GPU
-is used.
+Needs [uv](https://docs.astral.sh/uv/getting-started/installation/) and ffmpeg / ffprobe on PATH. Runs on CPU; with
+a CUDA build of torch the models run on an NVIDIA GPU (below).
 
 ```bash
 uv tool install "earshot[mcp] @ git+https://github.com/Leonxlnx/earshot"
 earshot doctor --fetch     # downloads the two models now (~1.1 GB)
 ```
+
+**GPU (NVIDIA, optional).** Install with a CUDA torch build instead (`--no-sources` skips the CPU-only index that
+`pyproject.toml` names; cu130 covers RTX 50 / Blackwell, cu128 / cu126 older drivers):
+
+```bash
+uv tool install --python 3.12 --no-sources --torch-backend cu130 "earshot[mcp] @ git+https://github.com/JS190-prog/earshot"
+earshot doctor --load      # device_used: cuda
+```
+
+`EARSHOT_DEVICE` picks the device: `auto` (default: the GPU when the installed torch runs on it, else CPU), `cpu`,
+`cuda` or `cuda:N` (an explicit `cuda` that cannot run is an error, not a silent CPU fallback). On a GPU the models
+run fp32 with TF32 off, so results match the CPU fp32 path (measured on a 60 s clip, RTX 5050 Laptop: CLAP cosine
+1.0000, AudioSet probabilities within 1e-6) and share its embedding cache; AST on 60 s went from 8.6 s to 1.5 s and
+CLAP from 2.9 s to 1.4 s. Model loading (and, for the CLI, the torch import) still costs seconds per process, so the
+MCP server or one Python script gains most.
 
 Update with `uv tool upgrade earshot`. For the optional Gemini critique (`earshot llm`, needs your own Gemini API
 key), install `"earshot[mcp,llm] @ git+https://github.com/Leonxlnx/earshot"` instead.
@@ -335,14 +350,15 @@ doctor` says so; `earshot doctor --fetch` downloads the pinned safetensors (776 
 
 Settings (environment variables): `EARSHOT_THREADS` (torch CPU threads, default min(4, cores/2); the CLI and the MCP
 server hold numpy / scipy's OpenBLAS to it too, unless `OPENBLAS_NUM_THREADS` is set), `EARSHOT_HOME`
-(cache root), `EARSHOT_PRECISION` (`bf16` by default, used only on CPUs with native bf16 such as AVX512-BF16 / AMX,
-fp32 everywhere else; `fp32` forces fp32), `EARSHOT_OFFLINE=1` (above), `EARSHOT_CLAP` / `EARSHOT_AST` (another
+(cache root), `EARSHOT_DEVICE` (`auto` / `cpu` / `cuda` / `cuda:N`, above), `EARSHOT_PRECISION` (`bf16` by
+default, used only on CPUs with native bf16 such as AVX512-BF16 / AMX, fp32 everywhere else including a GPU; `fp32`
+forces fp32), `EARSHOT_OFFLINE=1` (above), `EARSHOT_CLAP` / `EARSHOT_AST` (another
 Hub model id, or a local model folder with `config.json` and `model.safetensors`, which loads from disk as it is with
 no network and is never downloaded into) and `EARSHOT_CLAP_REVISION` / `EARSHOT_AST_REVISION` (another Hub revision;
 safetensors weights only). A custom Hub model downloads its top-level config, tokenizer and safetensors files by name,
 never a repo's subfolders or weight variants.
 `earshot doctor` reports the revisions and what the cache holds; `--load` also what loads (revision, weights,
-precision).
+precision, device).
 
 ### MCP server for Claude Code
 
